@@ -8,6 +8,7 @@ import NotFound from "@/pages/not-found";
 import MapPage from "@/pages/MapPage";
 import AuthPage from "@/pages/AuthPage";
 import RoutePlanPage from "@/pages/RoutePlanPage";
+import SettingsPage from "@/pages/SettingsPage";
 import Layout from "@/components/Layout";
 
 function AppRouter() {
@@ -17,6 +18,7 @@ function AppRouter() {
         <Route path="/" component={MapPage} />
         <Route path="/auth" component={AuthPage} />
         <Route path="/route" component={RoutePlanPage} />
+        <Route path="/settings" component={SettingsPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

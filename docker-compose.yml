@@ -11,11 +11,48 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-postgis.sql:/docker-entrypoint-initdb.d/init-postgis.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fuel} -d ${POSTGRES_DB:-fueldgps}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - internal
+
+  # ── Redis cache ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # ── OSRM Routing Engine (Italy) ──────────────────────────────
+  osrm-backend:
+    image: osrm/osrm-backend:latest
+    restart: unless-stopped
+    volumes:
+      - ./osrm-data:/data
+    command: >
+      osrm-routed --algorithm mld
+      /data/italy-latest.osrm
+      --max-table-size 10000
+    ports:
+      - "5001:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/route/v1/driving/12.4964,41.9028;11.2462,43.7696 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     networks:
       - internal
 
@@ -29,34 +66,39 @@ services:
       NODE_ENV: production
       PORT: 5000
       DATABASE_URL: postgres://${POSTGRES_USER:-fuel}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-fueldgps}
+      REDIS_URL: redis://redis:6379
+      OSRM_URL: http://osrm-backend:5000
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       FETCH_OSM: ${FETCH_OSM:-true}
-      SEED_DB: ${SEED_DB:-false}
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - internal
-      - external
+      - web
 
   # ── Nginx reverse proxy ─────────────────────────────────────
   nginx:
-    image: nginx:1.25-alpine
+    image: nginx:alpine
     restart: unless-stopped
     ports:
       - "${HTTP_PORT:-80}:80"
       - "${HTTPS_PORT:-443}:443"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./certs:/etc/nginx/certs:ro      # optional TLS certs
     depends_on:
       - app
     networks:
-      - external
+      - web
 
 volumes:
   pgdata:
+  redisdata:
 
 networks:
   internal:
-  external:
+    driver: bridge
+  web:
+    driver: bridge

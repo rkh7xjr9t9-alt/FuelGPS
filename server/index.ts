@@ -3,7 +3,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { storage } from "./storage";
-import { fetchAndCacheStations } from "./overpass";
+import { fetchLimitedStations } from "./services/overpassSync";
 import { seedStations } from "./seed";
 
 const app = express();
@@ -20,7 +20,7 @@ app.use(
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
-  }),
+  })
 );
 
 app.use(express.urlencoded({ extended: false }));
@@ -52,9 +52,8 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        logLine += ` :: ${JSON.stringify(capturedJsonResponse).slice(0, 200)}`;
       }
-
       log(logLine);
     }
   });
@@ -68,17 +67,19 @@ app.use((req, res, next) => {
 
   // Attempt to pull live data from Overpass; gracefully skip if offline
   if (process.env.FETCH_OSM !== "false") {
-    fetchAndCacheStations(storage, 200).catch((e) =>
+    fetchLimitedStations(storage, 300).catch((e) =>
       console.warn("[Overpass] skipping live fetch:", e.message)
     );
   }
 
-  // Weekly refresh cron (only in production)
+  // Production: setup cron jobs
   if (process.env.NODE_ENV === "production") {
-    const cron = await import("node-cron");
-    cron.default.schedule("0 3 * * 0", () => {
-      fetchAndCacheStations(storage, 1000).catch(console.error);
-    });
+    try {
+      const { setupSyncJobs } = await import("./jobs/stationSync.cron");
+      setupSyncJobs(storage);
+    } catch (e: any) {
+      console.warn("[Cron] Failed to setup sync jobs:", e.message);
+    }
   }
 
   await registerRoutes(httpServer, app);
@@ -96,9 +97,6 @@ app.use((req, res, next) => {
     return res.status(status).json({ message });
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
   if (process.env.NODE_ENV === "production") {
     serveStatic(app);
   } else {
@@ -106,10 +104,6 @@ app.use((req, res, next) => {
     await setupVite(httpServer, app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
   httpServer.listen(
     {
@@ -119,6 +113,6 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
-    },
+    }
   );
 })();

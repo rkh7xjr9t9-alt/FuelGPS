@@ -1,32 +1,28 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useAuth } from "@/lib/auth";
-import { useToast } from "@/hooks/use-toast";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
+import { fuelTypes, FUEL_DISPLAY } from "@shared/schema";
+import type { StationWithPrices, FuelType } from "@shared/schema";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { StationWithPrices } from "@shared/schema";
-import { fuelTypes } from "@shared/schema";
-
-const schema = z.object({
-  fuelType: z.enum(fuelTypes),
-  pricePerLiter: z.coerce.number().positive().max(10),
-});
-
-type FormData = z.infer<typeof schema>;
-
-const FUEL_LABELS: Record<string, string> = {
-  benzina: "Benzina",
-  gasolio: "Gasolio",
-  gpl: "GPL",
-  elettrico: "Elettrico (€/kWh)",
-};
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { useToast } from "@/hooks/use-toast";
+import { CheckCircle2 } from "lucide-react";
 
 export default function PriceSubmitDialog({
   station,
@@ -36,97 +32,116 @@ export default function PriceSubmitDialog({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const { user } = useAuth();
+  const [fuelType, setFuelType] = useState<FuelType>("benzina");
+  const [price, setPrice] = useState("");
+  const [isSelfService, setIsSelfService] = useState(true);
   const { toast } = useToast();
 
-  const form = useForm<FormData>({
-    resolver: zodResolver(schema),
-    defaultValues: { fuelType: "benzina", pricePerLiter: 0 },
+  // Filter to only fuel types available at this station
+  const availableFuels = fuelTypes.filter((ft) => {
+    if (ft === "benzina") return station.hasBenzina;
+    if (ft === "gasolio") return station.hasGasolio;
+    if (ft === "gpl") return station.hasGpl;
+    if (ft === "metano") return station.hasMetano;
+    if (ft === "elettrico") return station.hasElettrico;
+    return false;
   });
 
   const mutation = useMutation({
-    mutationFn: (data: FormData) =>
-      apiRequest("POST", `/api/stations/${station.id}/price`, data),
-    onSuccess: () => {
+    mutationFn: () =>
+      apiRequest("POST", "/api/prices/report", {
+        stationId: station.id,
+        fuelType,
+        price: parseFloat(price),
+        isSelfService,
+      }),
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/stations"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/stations", station.id] });
-      toast({ title: "Prezzo segnalato!", description: "Grazie per il tuo contributo." });
       setOpen(false);
-      form.reset();
+      setPrice("");
+      toast({
+        title: data.flagged
+          ? "Prezzo segnalato (in revisione)"
+          : "Prezzo registrato",
+        description: data.message,
+      });
     },
-    onError: (e: Error) =>
-      toast({ title: "Errore", description: e.message, variant: "destructive" }),
+    onError: (err: Error) => {
+      toast({
+        title: "Errore",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
   });
-
-  if (!user) return null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{children}</DialogTrigger>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle className="text-base">Segnala Prezzo</DialogTitle>
+          <DialogTitle className="text-base">Segnala prezzo</DialogTitle>
           <p className="text-sm text-muted-foreground">{station.name}</p>
         </DialogHeader>
-        <Form {...form}>
-          <form
-            onSubmit={form.handleSubmit((d) => mutation.mutate(d))}
-            className="space-y-4"
-          >
-            <FormField
-              control={form.control}
-              name="fuelType"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Tipo carburante</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                      <SelectTrigger data-testid="select-fuel-type">
-                        <SelectValue />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {fuelTypes.map((ft) => (
-                        <SelectItem key={ft} value={ft}>
-                          {FUEL_LABELS[ft]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="pricePerLiter"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Prezzo (€/litro)</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number"
-                      step="0.001"
-                      min="0.1"
-                      max="10"
-                      {...field}
-                      data-testid="input-price"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={mutation.isPending}
-              data-testid="button-submit-price"
+
+        <div className="space-y-4 mt-2">
+          <div>
+            <Label className="text-xs">Tipo carburante</Label>
+            <Select
+              value={fuelType}
+              onValueChange={(v) => setFuelType(v as FuelType)}
             >
-              {mutation.isPending ? "Invio..." : "Invia Prezzo"}
-            </Button>
-          </form>
-        </Form>
+              <SelectTrigger data-testid="select-report-fuel">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(availableFuels.length > 0 ? availableFuels : fuelTypes).map(
+                  (ft) => (
+                    <SelectItem key={ft} value={ft}>
+                      {FUEL_DISPLAY[ft].label}
+                    </SelectItem>
+                  )
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <Label className="text-xs">Prezzo (€/L)</Label>
+            <Input
+              type="number"
+              step="0.001"
+              min="0.50"
+              max="5.00"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              placeholder="es. 1.789"
+              className="tabular-nums"
+              data-testid="input-report-price"
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <Label className="text-xs">Self-service</Label>
+            <Switch
+              checked={isSelfService}
+              onCheckedChange={setIsSelfService}
+              data-testid="switch-self-service"
+            />
+          </div>
+
+          <Button
+            className="w-full gap-2"
+            disabled={
+              !price || parseFloat(price) < 0.5 || mutation.isPending
+            }
+            onClick={() => mutation.mutate()}
+            data-testid="button-submit-price"
+          >
+            <CheckCircle2 size={14} />
+            {mutation.isPending ? "Invio..." : "Conferma prezzo"}
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );
