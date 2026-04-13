@@ -5,6 +5,7 @@ import { createServer } from "http";
 import { storage } from "./storage";
 import { fetchLimitedStations } from "./services/overpassSync";
 import { seedStations } from "./seed";
+import { ingestMimitStations, ingestMimitPrices } from "./services/mimitService";
 
 const app = express();
 const httpServer = createServer(app);
@@ -62,11 +63,21 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Seed sample stations on startup (dev / first run)
-  await seedStations(storage);
+  // Load real MIMIT data (all Italian stations + prices)
+  // Falls back to seed data if MIMIT download fails
+  try {
+    console.log("[Startup] Fetching MIMIT station data...");
+    await ingestMimitStations(storage);
+    await ingestMimitPrices(storage);
+    const count = await storage.getStationCount();
+    console.log(`[Startup] Loaded ${count} stations from MIMIT`);
+  } catch (e: any) {
+    console.warn("[Startup] MIMIT fetch failed, using seed data:", e.message);
+    await seedStations(storage);
+  }
 
-  // Attempt to pull live data from Overpass; gracefully skip if offline
-  if (process.env.FETCH_OSM !== "false") {
+  // Optionally enrich with Overpass OSM data (amenities, EV connectors, etc.)
+  if (process.env.FETCH_OSM === "true") {
     fetchLimitedStations(storage, 300).catch((e) =>
       console.warn("[Overpass] skipping live fetch:", e.message)
     );

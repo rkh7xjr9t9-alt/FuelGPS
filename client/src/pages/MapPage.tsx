@@ -112,12 +112,20 @@ export default function MapPage() {
   const [fuelFilter, setFuelFilter] = useState<FuelType | "all">("all");
   const [maxPrice, setMaxPrice] = useState<number>(3.0);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [bbox, setBbox] = useState<{ minLat: number; maxLat: number; minLon: number; maxLon: number } | null>(null);
   const { user } = useAuth();
 
   const queryParams: Record<string, string> = { limit: "500" };
   if (searchCity) queryParams.city = searchCity;
   if (fuelFilter !== "all") queryParams.fuelType = fuelFilter;
   if (maxPrice < 3.0) queryParams.maxPrice = String(maxPrice);
+  // Add bbox for viewport-based loading
+  if (bbox && !searchCity) {
+    queryParams.minLat = String(bbox.minLat);
+    queryParams.maxLat = String(bbox.maxLat);
+    queryParams.minLon = String(bbox.minLon);
+    queryParams.maxLon = String(bbox.maxLon);
+  }
 
   const { data, isLoading } = useQuery<{
     stations: StationWithPrices[];
@@ -128,6 +136,19 @@ export default function MapPage() {
   });
 
   const stations = data?.stations ?? [];
+
+  // Update bbox when map moves
+  const updateBbox = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const bounds = map.getBounds();
+    setBbox({
+      minLat: bounds.getSouth(),
+      maxLat: bounds.getNorth(),
+      minLon: bounds.getWest(),
+      maxLon: bounds.getEast(),
+    });
+  }, []);
 
   // Init Leaflet + MarkerCluster
   useEffect(() => {
@@ -179,13 +200,19 @@ export default function MapPage() {
     markersRef.current = clusterGroup;
     mapRef.current = map;
 
+    // Load stations for initial viewport + on every pan/zoom
+    map.on("moveend", updateBbox);
+    // Trigger initial load
+    updateBbox();
+
     return () => {
       if (mapRef.current) {
+        mapRef.current.off("moveend", updateBbox);
         mapRef.current.remove();
         mapRef.current = null;
       }
     };
-  }, []);
+  }, [updateBbox]);
 
   // Create station marker icon
   const createMarkerIcon = useCallback(
