@@ -61,17 +61,16 @@ function pointToSegmentDist(
 }
 
 /**
- * Get OSRM route between two [lon,lat] points
+ * Get OSRM route between multiple [lon,lat] waypoints
  */
 export async function getRoute(
-  originLonLat: [number, number],
-  destLonLat: [number, number],
-  profile: "car" | "bike" = "car"
+  ...waypoints: Array<[number, number]>
 ): Promise<OSRMRouteResponse["routes"][0]> {
-  const coords = `${originLonLat[0]},${originLonLat[1]};${destLonLat[0]},${destLonLat[1]}`;
+  if (waypoints.length < 2) throw new Error("Need at least 2 waypoints");
+  const coords = waypoints.map((w) => `${w[0]},${w[1]}`).join(";");
   const url = `${OSRM_BASE}/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=true`;
 
-  const res = await axios.get<OSRMRouteResponse>(url, { timeout: 15000 });
+  const res = await axios.get<OSRMRouteResponse>(url, { timeout: 30000 });
   if (res.data.code !== "Ok" || !res.data.routes.length) {
     throw new Error("OSRM could not compute route");
   }
@@ -229,9 +228,9 @@ export async function planRoute(
     geocode(destAddress),
   ]);
 
-  // Get OSRM route
-  const route = await getRoute(originCoord, destCoord);
-  const coords = route.geometry.coordinates as Array<[number, number]>;
+  // Step 1: Get direct OSRM route (to find corridor stations)
+  const directRoute = await getRoute(originCoord, destCoord);
+  const coords = directRoute.geometry.coordinates as Array<[number, number]>;
 
   // Current fuel state
   const currentLiters = (currentFuelPercent / 100) * tankSizeLiters;
@@ -247,7 +246,7 @@ export async function planRoute(
     return true;
   });
 
-  // Find stations along route corridor
+  // Find stations along direct route corridor
   const corridorStations = findStationsAlongRoute(
     coords,
     fuelStations,
@@ -264,14 +263,31 @@ export async function planRoute(
     maxDetourKm
   );
 
+  // Step 2: If there are fuel stops, re-route through them
+  let finalRoute = directRoute;
+  if (stops.length > 0) {
+    try {
+      const waypoints: Array<[number, number]> = [
+        originCoord,
+        ...stops.map((s) => [s.station.lon, s.station.lat] as [number, number]),
+        destCoord,
+      ];
+      finalRoute = await getRoute(...waypoints);
+      console.log(`[Route] Re-routed through ${stops.length} fuel stop(s)`);
+    } catch (e: any) {
+      console.warn("[Route] Multi-waypoint route failed, using direct route:", e.message);
+      // Fall back to direct route
+    }
+  }
+
   const totalCost = stops.reduce((acc, s) => acc + s.estimatedCost, 0);
-  const routeDistKm = route.distance / 1000;
+  const routeDistKm = finalRoute.distance / 1000;
 
   return {
     route: {
-      distance: route.distance,
-      duration: route.duration,
-      geometry: route.geometry,
+      distance: finalRoute.distance,
+      duration: finalRoute.duration,
+      geometry: finalRoute.geometry,
     },
     stops,
     summary: {
