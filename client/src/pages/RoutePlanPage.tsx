@@ -39,6 +39,7 @@ import {
   Gauge,
   CircleDollarSign,
 } from "lucide-react";
+import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 const VEHICLE_CONFIG: Record<
@@ -71,7 +72,6 @@ export default function RoutePlanPage() {
   const [removedStops, setRemovedStops] = useState<Set<string>>(new Set());
   const mapRef = useRef<any>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  const leafletRef = useRef<any>(null);
 
   const form = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -104,81 +104,78 @@ export default function RoutePlanPage() {
   useEffect(() => {
     if (!result || !mapContainerRef.current) return;
 
-    import("leaflet").then((L) => {
-      leafletRef.current = L;
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
+    if (mapRef.current) {
+      mapRef.current.remove();
+      mapRef.current = null;
+    }
 
-      const map = L.map(mapContainerRef.current!, {
-        zoomControl: true,
-      });
-
-      L.tileLayer(
-        "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-        {
-          attribution:
-            '&copy; <a href="https://openstreetmap.org">OSM</a> &copy; <a href="https://carto.com">CARTO</a>',
-          subdomains: "abcd",
-        }
-      ).addTo(map);
-
-      // Route polyline
-      const routeLayer = L.geoJSON(result.route.geometry, {
-        style: {
-          color: "hsl(183, 98%, 22%)",
-          weight: 5,
-          opacity: 0.8,
-          lineCap: "round",
-          lineJoin: "round",
-        },
-      }).addTo(map);
-
-      // Fuel stop markers
-      const visibleStops = result.stops.filter(
-        (s) => !removedStops.has(s.station.id)
-      );
-
-      visibleStops.forEach((stop, i) => {
-        const icon = L.divIcon({
-          html: `<div style="background:#01696f;color:white;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,.25);font-family:'Satoshi','Inter',system-ui">${i + 1}</div>`,
-          className: "",
-          iconSize: [28, 28],
-          iconAnchor: [14, 14],
-        });
-
-        L.marker([stop.station.lat, stop.station.lon], { icon })
-          .bindPopup(
-            `<b>${stop.station.name}</b><br/>€${stop.estimatedCost.toFixed(2)} · +${stop.distanceFromRoute.toFixed(1)}km detour`
-          )
-          .addTo(map);
-      });
-
-      // Origin/destination markers
-      const coords = result.route.geometry.coordinates;
-      if (coords.length >= 2) {
-        const originIcon = L.divIcon({
-          html: `<div style="background:#22c55e;color:white;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,.25)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"/></svg></div>`,
-          className: "",
-          iconSize: [24, 24],
-          iconAnchor: [12, 12],
-        });
-        const destIcon = L.divIcon({
-          html: `<div style="background:#ef4444;color:white;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,.25)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/></svg></div>`,
-          className: "",
-          iconSize: [24, 24],
-          iconAnchor: [12, 12],
-        });
-        const first = coords[0] as [number, number];
-        const last = coords[coords.length - 1] as [number, number];
-        L.marker([first[1], first[0]], { icon: originIcon }).addTo(map);
-        L.marker([last[1], last[0]], { icon: destIcon }).addTo(map);
-      }
-
-      map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
-      mapRef.current = map;
+    const map = L.map(mapContainerRef.current, {
+      zoomControl: true,
     });
+
+    L.tileLayer(
+      "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+      {
+        attribution:
+          '&copy; <a href="https://openstreetmap.org">OSM</a> &copy; <a href="https://carto.com">CARTO</a>',
+        subdomains: "abcd",
+      }
+    ).addTo(map);
+
+    // Route polyline
+    const routeLayer = L.geoJSON(result.route.geometry as any, {
+      style: {
+        color: "hsl(183, 98%, 22%)",
+        weight: 5,
+        opacity: 0.8,
+        lineCap: "round",
+        lineJoin: "round",
+      },
+    }).addTo(map);
+
+    // Fuel stop markers
+    const visibleStops = result.stops.filter(
+      (s) => !removedStops.has(s.station.id)
+    );
+
+    visibleStops.forEach((stop, i) => {
+      const icon = L.divIcon({
+        html: `<div style="background:#01696f;color:white;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,.25);font-family:'Satoshi','Inter',system-ui">${i + 1}</div>`,
+        className: "",
+        iconSize: L.point(28, 28),
+        iconAnchor: L.point(14, 14),
+      });
+
+      L.marker([stop.station.lat, stop.station.lon], { icon })
+        .bindPopup(
+          `<b>${stop.station.name}</b><br/>€${stop.estimatedCost.toFixed(2)} · +${stop.distanceFromRoute.toFixed(1)}km detour`
+        )
+        .addTo(map);
+    });
+
+    // Origin/destination markers
+    const coords = result.route.geometry.coordinates;
+    if (coords.length >= 2) {
+      const originIcon = L.divIcon({
+        html: `<div style="background:#22c55e;color:white;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,.25)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"/></svg></div>`,
+        className: "",
+        iconSize: L.point(24, 24),
+        iconAnchor: L.point(12, 12),
+      });
+      const destIcon = L.divIcon({
+        html: `<div style="background:#ef4444;color:white;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,.25)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/></svg></div>`,
+        className: "",
+        iconSize: L.point(24, 24),
+        iconAnchor: L.point(12, 12),
+      });
+      const first = coords[0] as [number, number];
+      const last = coords[coords.length - 1] as [number, number];
+      L.marker([first[1], first[0]], { icon: originIcon }).addTo(map);
+      L.marker([last[1], last[0]], { icon: destIcon }).addTo(map);
+    }
+
+    map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
+    mapRef.current = map;
 
     return () => {
       if (mapRef.current) {
